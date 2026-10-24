@@ -37,7 +37,15 @@ python backend/chat.py
 - แสดงเอกสารต้นทางท้ายคำตอบ
 - พิมพ์ `/exit` เพื่อออก
 
-## ไฟล์
+## Web UI
+
+```powershell
+pip install -r requirements.txt   # ถ้ายังไม่ได้ติดตั้ง fastapi/uvicorn
+python backend/server.py            # http://127.0.0.1:8000
+python backend/server.py 8080       # port กำหนดเอง
+```
+
+เปิดเบราว์เซอร์ไปที่ `http://127.0.0.1:8000` — หน้า chat จะเรียก `POST /api/chat` ที่ backend โดยอัตโนมัติ
 
 | ไฟล์ | หน้าที่ |
 |---|---|

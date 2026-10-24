@@ -19,7 +19,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import SQLiteVec
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent  # project root
 DB_PATH = BASE_DIR / "legal_rag.db"
 
 EMBED_MODEL = "models/gemini-embedding-001"

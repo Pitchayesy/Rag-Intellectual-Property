@@ -20,7 +20,7 @@ from langchain_core.documents import Document
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import SQLiteVec
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent  # project root
 DATA_DIR = BASE_DIR / "data"
 DB_PATH = BASE_DIR / "legal_rag.db"
 

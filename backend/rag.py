@@ -1,14 +1,7 @@
-#!/usr/bin/env python3
-"""Interactive command-line chat over the legal vector database.
-
-Retrieves the most relevant legal chunks for each user question and asks
-Gemini to answer strictly from that context, citing the source document.
-
-Usage:
-    python chat.py
-"""
+"""Shared RAG helpers used by both the CLI (chat.py) and the web server (server.py)."""
 
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -19,13 +12,13 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import SQLiteVec
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent  # project root
 DB_PATH = BASE_DIR / "legal_rag.db"
 
 EMBED_MODEL = "models/gemini-embedding-001"
 EMBED_DIM = 768
 CHAT_MODEL = "gemini-3.8-flash"
-K = 6  # chunks to retrieve per question
+K = 6
 
 load_dotenv(BASE_DIR / ".env")
 
@@ -46,11 +39,12 @@ SYSTEM_PROMPT = """คุณเป็นผู้ช่วยวิเครา�
 
 
 def build_context(docs: list[Document]) -> str:
-    return "\n\n---\n\n".join(f"[ที่มา: {d.metadata.get('source', 'unknown')}]\n{d.page_content}" for d in docs)
+    return "\n\n---\n\n".join(
+        f"[ที่มา: {d.metadata.get('source', 'unknown')}]\\n{d.page_content}" for d in docs
+    )
 
 
 def _invoke_with_retry(llm, messages, attempts: int = 4):
-    """Invoke the LLM, backing off on 429 rate limits."""
     for attempt in range(1, attempts + 1):
         try:
             return llm.invoke(messages)
@@ -59,60 +53,68 @@ def _invoke_with_retry(llm, messages, attempts: int = 4):
             if not rate_limited or attempt == attempts:
                 raise
             wait = 20 * attempt
-            print(f"  ติด rate limit, รอ {wait} วินาทีแล้วลองใหม่ ({attempt}/{attempts - 1})...")
             time.sleep(wait)
 
 
-def main():
-    if not os.environ.get("GOOGLE_API_KEY"):
-        sys.exit("Error: set GOOGLE_API_KEY in .env")
-    if not DB_PATH.exists():
-        sys.exit("Error: vector DB not found. Run `python ingest.py` first.")
+# แคช instance ที่สร้างหนักและใช้ร่วมกันได้อย่างปลอดภัย (HTTP clients)
+_embeddings = None
+_llm = None
 
-    embeddings = GoogleGenerativeAIEmbeddings(
-        model=EMBED_MODEL,
-        output_dimensionality=EMBED_DIM,
-        task_type="RETRIEVAL_QUERY",
-    )
-    db = SQLiteVec(
+
+def get_embeddings():
+    global _embeddings
+    if _embeddings is None:
+        _embeddings = GoogleGenerativeAIEmbeddings(
+            model=EMBED_MODEL,
+            output_dimensionality=EMBED_DIM,
+            task_type="RETRIEVAL_QUERY",
+        )
+    return _embeddings
+
+
+def get_vector_db():
+    # สร้างต่อ request: SQLiteVec ถือ sqlite3 connection ซึ่งไม่ปลอดภัยหากแชร์ข้าม thread
+    if not DB_PATH.exists():
+        raise FileNotFoundError(
+            f"vector DB not found: {DB_PATH}. Run `python backend/ingest.py` first."
+        )
+    return SQLiteVec(
         table="law_chunks",
         connection=None,
         db_file=str(DB_PATH),
-        embedding=embeddings,
+        embedding=get_embeddings(),
     )
-    llm = ChatGoogleGenerativeAI(model=CHAT_MODEL, temperature=0.1)
-
-    print("=== ระบบถามตอบกฎหมาย (พิมพ์คำถาม, /exit เพื่อออก) ===")
-    while True:
-        try:
-            question = input("\nคำถาม: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            break
-        if not question:
-            continue
-        if question.lower() in ("/exit", "/quit", "exit", "quit"):
-            break
-
-        docs = db.similarity_search(question, k=K)
-        if not docs:
-            print("ไม่พบข้อมูลในฐานข้อมูล ลองรัน ingest.py ใหม่")
-            continue
-
-        print("\n--- กำลังค้นและคิดคำตอบ... ---")
-        response = _invoke_with_retry(
-            llm,
-            [
-                SystemMessage(SYSTEM_PROMPT),
-                HumanMessage(f"CONTEXT (ข้อความจากเอกสารกฎหมาย):\n{build_context(docs)}\n\nคำถาม: {question}"),
-            ],
-        )
-        print("\nคำตอบ:")
-        print(response.text)
-        print("\nเอกสารต้นทาง:")
-        for d in docs:
-            print(f"  - {d.metadata.get('source', 'unknown')}")
 
 
-if __name__ == "__main__":
-    main()
+def get_llm():
+    global _llm
+    if _llm is None:
+        _llm = ChatGoogleGenerativeAI(model=CHAT_MODEL, temperature=0.1)
+    return _llm
+
+
+def answer_question(question: str) -> dict:
+    """Return {'answer': str, 'sources': list[str]}."""
+    db = get_vector_db()
+    docs = db.similarity_search(question, k=K)
+    if not docs:
+        return {
+            "answer": "ไม่พบข้อมูลในฐานข้อมูล ลองรัน ingest.py ใหม่",
+            "sources": [],
+        }
+    llm = get_llm()
+    response = _invoke_with_retry(
+        llm,
+        [
+            SystemMessage(SYSTEM_PROMPT),
+            HumanMessage(f"CONTEXT (ข้อความจากเอกสารกฎหมาย):\\n{build_context(docs)}\\n\\nคำถาม: {question}"),
+        ],
+    )
+    sources = []
+    seen = set()
+    for d in docs:
+        s = d.metadata.get("source", "unknown")
+        if s not in seen:
+            seen.add(s)
+            sources.append(s)
+    return {"answer": response.text, "sources": sources}

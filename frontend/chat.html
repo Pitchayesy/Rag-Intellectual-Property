@@ -42,7 +42,7 @@
 </div>
 </section>
 <!-- Chat Conversation Stream -->
-<div class="w-full flex-1 flex flex-col gap-space-lg overflow-y-auto pr-space-xs my-space-xs">
+<div class="w-full flex-1 flex flex-col gap-space-lg overflow-y-auto pr-space-xs my-space-xs" id="chat-stream">
 <!-- User Dialogue (Right side) -->
 <div class="flex flex-col items-end gap-space-xs max-w-2xl ml-auto">
 <div class="flex items-center gap-space-xs text-outline px-space-xs">
@@ -220,7 +220,7 @@
         </button>
 </div>
 <!-- Elevated Chat Input Bar -->
-<form class="relative flex items-center bg-surface-container/90 backdrop-blur-2xl rounded-2xl p-space-xs shadow-2xl shadow-surface-container-lowest/80 focus-within:shadow-[0_0_24px_rgba(45,212,191,0.2)] transition-all" onsubmit="event.preventDefault();">
+<form class="relative flex items-center bg-surface-container/90 backdrop-blur-2xl rounded-2xl p-space-xs shadow-2xl shadow-surface-container-lowest/80 focus-within:shadow-[0_0_24px_rgba(45,212,191,0.2)] transition-all" onsubmit="event.preventDefault(); sendMessage();">
 <div class="flex items-center pl-space-xs gap-1">
 <button class="p-space-xs rounded-xl text-outline hover:text-primary hover:bg-surface-container-highest transition-colors" title="แนบเอกสารคำขอหรือรูปเครื่องหมาย" type="button">
 <span class="material-symbols-outlined text-[20px]">attach_file</span>
@@ -253,4 +253,56 @@
       inputField.focus();
     }
   }
-</script></main></div></body></html>
+</script></main></div><script>
+  const API_URL = "/api/chat";
+  function escapeHtml(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+  function appendMessage(role, text, sources){
+    const stream = document.getElementById("chat-stream");
+    if(!stream) return;
+    const isUser = role === "user";
+    const wrapper = document.createElement("div");
+    wrapper.className = isUser
+      ? "flex flex-col items-end gap-space-xs max-w-2xl ml-auto"
+      : "flex flex-col items-start gap-space-xs max-w-4xl mr-auto";
+    const bubble = document.createElement("div");
+    bubble.className = isUser
+      ? "bg-gradient-to-br from-primary-container to-secondary-container text-on-primary-container p-space-md rounded-2xl rounded-tr-xs shadow-lg"
+      : "relative bg-surface-container/85 backdrop-blur-xl p-space-lg rounded-2xl rounded-tl-xs shadow-2xl overflow-hidden";
+    let html = '<p class="font-body-md text-body-md leading-relaxed whitespace-pre-wrap">' + escapeHtml(text) + '</p>';
+    if(!isUser && sources && sources.length){
+      html += '<div class="mt-space-sm pt-space-sm border-t border-outline-variant/30 font-label-sm text-label-sm text-outline">เอกสารต้นทาง: ' + sources.map(escapeHtml).join(", ") + '</div>';
+    }
+    bubble.innerHTML = html;
+    wrapper.appendChild(bubble);
+    stream.appendChild(wrapper);
+    stream.scrollTop = stream.scrollHeight;
+  }
+  async function sendMessage(){
+    const input = document.getElementById("chat-input");
+    if(!input) return;
+    const question = input.value.trim();
+    if(!question) return;
+    appendMessage("user", question);
+    input.value = "";
+    const typing = document.createElement("div");
+    typing.className = "flex flex-col items-start gap-space-xs max-w-4xl mr-auto";
+    typing.id = "typing-indicator";
+    typing.innerHTML = '<div class="bg-surface-container/85 backdrop-blur-xl p-space-md rounded-2xl rounded-tl-xs text-outline font-body-md">กำลังคิดคำตอบ...</div>';
+    document.getElementById("chat-stream").appendChild(typing);
+    try {
+      const res = await fetch(API_URL, {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({question})
+      });
+      const data = await res.json();
+      typing.remove();
+      if(!res.ok){ appendMessage("assistant", "เกิดข้อผิดพลาด: " + (data.error || res.status)); return; }
+      appendMessage("assistant", data.answer || "", data.sources || []);
+    } catch(err){
+      typing.remove();
+      appendMessage("assistant", "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้: " + err);
+    }
+  }
+</script>
+</body></html>
